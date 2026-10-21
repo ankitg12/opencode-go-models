@@ -143,13 +143,22 @@ func run() error {
 	}
 
 	shown := applyFilters(models, *all, *oneM, *family, *free)
+	freeTotal := 0
+	for _, m := range models {
+		free := (m.PriceInput == nil || *m.PriceInput == 0) && (m.PriceOutput == nil || *m.PriceOutput == 0)
+		if free {
+			freeTotal++
+		}
+	}
 	if *latest {
 		shown = latestModels(shown)
 	}
 	if *sortBy != "" {
 		sortModels(shown, *sortBy)
 	}
+	limited := 0
 	if effectiveLimit > 0 && effectiveLimit < len(shown) {
+		limited = len(shown) - effectiveLimit
 		shown = shown[:effectiveLimit]
 	}
 	if *sqlQuery != "" { // --sql WITH --refresh: fetch happened, now query.
@@ -158,7 +167,7 @@ func run() error {
 	if *jsonOut {
 		return printJSON(os.Stdout, shown, fetchedAt)
 	}
-	renderView(os.Stdout, shown, len(models), fetchedAt, *latest, *sortBy)
+	renderView(os.Stdout, shown, len(models), freeTotal, limited, fetchedAt, *latest, *sortBy)
 	return nil
 }
 

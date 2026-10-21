@@ -207,7 +207,7 @@ func sortModels(models []db.Model, by string) {
 	})
 }
 
-func renderView(w io.Writer, models []db.Model, total int, fetchedAt string, latest bool, sortBy string) {
+func renderView(w io.Writer, models []db.Model, total, freeTotal, limited int, fetchedAt string, latest bool, sortBy string) {
 	title := "paid models"
 	if latest {
 		title = "latest " + title
@@ -221,8 +221,16 @@ func renderView(w io.Writer, models []db.Model, total int, fetchedAt string, lat
 			priceStr(m), cacheStr(m), visionMark(m), seenStr(m))
 	}
 	tw.Flush()
-	if len(models) < total {
-		fmt.Fprintf(w, "\n%d shown · %d hidden (free/preview) · --all to include, --free for only them\n", len(models), total-len(models))
+	hidden := total - len(models)
+	if hidden > 0 {
+		fmt.Fprintf(w, "\n%d shown · %d hidden (%d free/preview", len(models), hidden, freeTotal)
+		if flagFiltered := hidden - freeTotal - limited; flagFiltered > 0 {
+			fmt.Fprintf(w, ", %d filtered by --latest/--family/--1m", flagFiltered)
+		}
+		if limited > 0 {
+			fmt.Fprintf(w, ", %d cut by -n", limited)
+		}
+		fmt.Fprintf(w, ") · --all to include free rows\n")
 	}
 	fmt.Fprintln(w)
 }
