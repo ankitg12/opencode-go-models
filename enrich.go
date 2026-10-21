@@ -1,63 +1,85 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
-// ompEnrichment shells out to `omp models --json` when available and returns
-// per-id context/limits/pricing/vision for the opencode-go provider rows.
-// Absent/broken omp (non-OMP machines, CI) yields an empty map — the caller
-// falls back to cached values, never to an error.
-func ompEnrichment(ctx context.Context) map[string]enrich {
+const modelsDevURL = "https://catalog.stencil.so/models.json.zstd"
+
+// mdEnrichment fetches the models.dev snapshot and returns per-id
+// context/limits/pricing/vision for the opencode-go provider rows — the same
+// source OMP hydrates from, minus the harness. Any fetch/decode failure yields
+// an empty map; the caller falls back to cached values, never to an error.
+func mdEnrichment(ctx context.Context) map[string]enrich {
 	out := map[string]enrich{}
-	omp, err := exec.LookPath("omp")
-	if err != nil {
-		return out
-	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, omp, "models", "--json")
-	raw, err := cmd.Output()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsDevURL, nil)
 	if err != nil {
 		return out
 	}
-	var payload struct {
-		Models []struct {
-			Provider      string   `json:"provider"`
-			ID            string   `json:"id"`
-			Name          string   `json:"name"`
-			ContextWindow *int64   `json:"contextWindow"`
-			MaxTokens     *int64   `json:"maxTokens"`
-			Input         []string `json:"input"`
-			Cost          struct {
+	req.Header.Set("Accept", "application/zstd, application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return out
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return out
+	}
+	if dec, derr := zstd.NewReader(nil); derr == nil {
+		defer dec.Close()
+		if inflated, derr := dec.DecodeAll(raw, nil); derr == nil {
+			raw = inflated
+		} else if !isJSON(raw) {
+			return out
+		}
+	} else if !isJSON(raw) {
+		return out
+	}
+	var catalog map[string]struct {
+		Models map[string]struct {
+			ID    string `json:"id"`
+			Name  string `json:"name"`
+			Limit struct {
+				Context int64 `json:"context"`
+				Output  int64 `json:"output"`
+			} `json:"limit"`
+			Cost struct {
 				Input      *float64 `json:"input"`
 				Output     *float64 `json:"output"`
-				CacheRead  *float64 `json:"cacheRead"`
-				CacheWrite *float64 `json:"cacheWrite"`
+				CacheRead  *float64 `json:"cache_read"`
+				CacheWrite *float64 `json:"cache_write"`
 			} `json:"cost"`
+			Modalities struct {
+				Input []string `json:"input"`
+			} `json:"modalities"`
 		} `json:"models"`
 	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&catalog); err != nil {
 		return out
 	}
-	for _, m := range payload.Models {
-		if m.Provider != "opencode-go" || m.ID == "" {
+	prov, ok := catalog["opencode-go"]
+	if !ok {
+		return out
+	}
+	for id, m := range prov.Models {
+		if id == "" {
 			continue
 		}
-		e := enrich{Name: m.Name}
-		if m.ContextWindow != nil {
-			e.Ctx = *m.ContextWindow
-		}
-		if m.MaxTokens != nil {
-			e.Out = *m.MaxTokens
-		}
+		e := enrich{Name: m.Name, Ctx: m.Limit.Context, Out: m.Limit.Output}
 		if m.Cost.Input != nil {
 			e.InPrice = *m.Cost.Input
 		}
@@ -70,14 +92,67 @@ func ompEnrichment(ctx context.Context) map[string]enrich {
 		if m.Cost.CacheWrite != nil {
 			e.CacheWrite = *m.Cost.CacheWrite
 		}
-		for _, in := range m.Input {
+		for _, in := range m.Modalities.Input {
 			if in == "image" {
 				e.Vision = true
 			}
 		}
-		out[m.ID] = e
+		out[id] = e
+	}
+	// Sibling borrow: both gateways share one operator with identical endpoint
+	// semantics, so the sibling's models.dev rows cover ids missing here.
+	// (Same borrow OMP performs in openCodeModelManagerOptions.)
+	if sib, ok := catalog["opencode"]; ok {
+		for id, m := range sib.Models {
+			if _, have := out[id]; have || id == "" {
+				continue
+			}
+			e := enrich{Name: m.Name, Ctx: m.Limit.Context, Out: m.Limit.Output}
+			if m.Cost.Input != nil {
+				e.InPrice = *m.Cost.Input
+			}
+			if m.Cost.Output != nil {
+				e.OutPrice = *m.Cost.Output
+			}
+			if m.Cost.CacheRead != nil {
+				e.CacheRead = *m.Cost.CacheRead
+			}
+			if m.Cost.CacheWrite != nil {
+				e.CacheWrite = *m.Cost.CacheWrite
+			}
+			for _, in := range m.Modalities.Input {
+				if in == "image" {
+					e.Vision = true
+				}
+			}
+			out[id] = e
+		}
+	}
+	// handPatches covers live ids in neither models.dev provider. Values from
+	// https://opencode.ai/docs/go/; models.dev or sibling rows win when present.
+	handPatches := map[string]enrich{
+		"qwen3.7-max": {Name: "Qwen3.7 Max", Ctx: 1_000_000, Out: 65_536, InPrice: 2.5, OutPrice: 7.5, CacheRead: 0.5, CacheWrite: 3.125},
+	}
+	for id, e := range handPatches {
+		if _, have := out[id]; !have {
+			out[id] = e
+		}
 	}
 	return out
+}
+
+func isJSON(raw []byte) bool {
+	for _, b := range raw {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{', '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // goUsageWindow is one rolling/weekly/monthly window from /v1/usage.

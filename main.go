@@ -291,7 +291,7 @@ func fetchCatalog(ctx context.Context, dbPath, _ string) ([]db.Model, error) {
 		}
 		conn.Close()
 	}
-	en := ompEnrichment(ctx)
+	en := mdEnrichment(ctx)
 	now := time.Now().UTC().Format(fetchedTimeFormat)
 	models := make([]db.Model, 0, len(live))
 	for _, lm := range live {
