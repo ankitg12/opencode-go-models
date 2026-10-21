@@ -1,7 +1,7 @@
 package main
 
 // fallbackPricing is hand-maintained from https://opencode.ai/docs/go/ for
-// ids the local OMP catalog does not (yet) list. OMP enrichment wins when
+// ids neither models.dev provider lists yet. models.dev wins when
 // present; this table only fills the gap. Check the docs page when a new id
 // appears with zero pricing.
 var fallbackPricing = map[string]enrich{}

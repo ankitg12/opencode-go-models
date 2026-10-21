@@ -251,7 +251,7 @@ func tokenStr(value *int64) string {
 	}
 }
 
-// --- catalog fetch (no key needed) + OMP enrichment + cache ---
+// --- catalog fetch (no key needed) + models.dev enrichment + cache ---
 
 type liveModel struct {
 	ID      string `json:"id"`
@@ -260,9 +260,9 @@ type liveModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-// enrich holds the stable per-model metadata OMP ships (context, limits,
+// enrich holds the stable per-model metadata models.dev ships (context, limits,
 // pricing, vision) because the public /models rows carry id/object/created
-// only. Refreshed from `omp models --json` when available; otherwise the
+// only. Refreshed from models.dev when reachable; otherwise the
 // previous cache (or the hand-maintained fallback below) stands.
 type enrich struct {
 	Name       string
@@ -276,7 +276,7 @@ type enrich struct {
 }
 
 // fetchCatalog returns display models. It always fetches the live id list,
-// preserves first_seen per id, and layers OMP enrichment + fallback pricing.
+// preserves first_seen per id, and layers models.dev + fallback pricing.
 func fetchCatalog(ctx context.Context, dbPath, _ string) ([]db.Model, error) {
 	live, err := fetchLiveIDs(ctx)
 	if err != nil {
@@ -302,7 +302,7 @@ func fetchCatalog(ctx context.Context, dbPath, _ string) ([]db.Model, error) {
 		if p, ok := prev[lm.ID]; ok {
 			// first_seen is append-only history: never rewrite it.
 			m.FirstSeen = p.FirstSeen
-			// Carry forward last-known enrichment; OMP/fallback below may refresh.
+			// Carry forward last-known enrichment; models.dev/fallback below may refresh.
 			m.Name, m.ContextLength, m.MaxOutputTokens = p.Name, p.ContextLength, p.MaxOutputTokens
 			m.PriceInput, m.PriceOutput, m.PriceCacheRead, m.PriceCacheCreate = p.PriceInput, p.PriceOutput, p.PriceCacheRead, p.PriceCacheCreate
 			m.CapVision, m.CapChat = p.CapVision, p.CapChat
@@ -323,7 +323,7 @@ func fetchCatalog(ctx context.Context, dbPath, _ string) ([]db.Model, error) {
 			one := int64(1)
 			m.CapChat = &one
 		} else if fb, ok := fallbackPricing[lm.ID]; ok && m.PriceInput == nil {
-			// Hand-maintained docs pricing for ids OMP does not (yet) list.
+			// Hand-maintained docs pricing for ids models.dev does not (yet) list.
 			m.Name = strPtr(fb.Name)
 			m.ContextLength = &fb.Ctx
 			m.MaxOutputTokens = &fb.Out

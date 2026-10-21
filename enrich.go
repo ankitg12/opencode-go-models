@@ -17,7 +17,7 @@ const modelsDevURL = "https://catalog.stencil.so/models.json.zstd"
 
 // mdEnrichment fetches the models.dev snapshot and returns per-id
 // context/limits/pricing/vision for the opencode-go provider rows — the same
-// source OMP hydrates from, minus the harness. Any fetch/decode failure yields
+// source other catalogs hydrate from, fetched directly here. Any fetch/decode failure yields
 // an empty map; the caller falls back to cached values, never to an error.
 func mdEnrichment(ctx context.Context) map[string]enrich {
 	out := map[string]enrich{}
@@ -99,9 +99,8 @@ func mdEnrichment(ctx context.Context) map[string]enrich {
 		}
 		out[id] = e
 	}
-	// Sibling borrow: both gateways share one operator with identical endpoint
-	// semantics, so the sibling's models.dev rows cover ids missing here.
-	// (Same borrow OMP performs in openCodeModelManagerOptions.)
+	// Sibling borrow: opencode and opencode-go share one operator with identical
+	// endpoint semantics, so the sibling's models.dev rows cover ids missing here.
 	if sib, ok := catalog["opencode"]; ok {
 		for id, m := range sib.Models {
 			if _, have := out[id]; have || id == "" {

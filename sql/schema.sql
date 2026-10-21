@@ -1,5 +1,5 @@
 -- OpenCode Go model catalog. Live /zen/go/v1/models rows carry id/object/created
--- only; name/context/pricing/vision come from optional local OMP enrichment or
+-- only; name/context/pricing/vision come from models.dev enrichment or
 -- hand-maintained fallback pricing. first_seen is append-only catalog history:
 -- set on first observation, never rewritten by later refreshes.
 CREATE TABLE IF NOT EXISTS models (
